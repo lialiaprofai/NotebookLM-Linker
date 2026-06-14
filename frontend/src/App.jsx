@@ -104,6 +104,35 @@ export default function App() {
     }
   }, [chatMessages, chatLoading]);
 
+  const copyToClipboard = (text) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => alert("Ссылка скопирована в буфер обмена!"))
+        .catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  };
+
+  const fallbackCopy = (text) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.top = "0";
+    textArea.style.left = "0";
+    textArea.style.position = "fixed";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      alert("Ссылка скопирована в буфер обмена!");
+    } catch (err) {
+      console.error("Fallback copy failed: ", err);
+      alert("Не удалось скопировать. Скопируйте ссылку вручную.");
+    }
+    document.body.removeChild(textArea);
+  };
+
   const checkAuthStatus = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/drive/auth-status`);
@@ -891,8 +920,7 @@ export default function App() {
                         </div>
                         <button 
                           onClick={() => {
-                            navigator.clipboard.writeText(link.url);
-                            alert("Ссылка скопирована в буфер обмена!");
+                            copyToClipboard(link.url);
                           }}
                           className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-lg text-xs font-semibold transition whitespace-nowrap"
                         >
