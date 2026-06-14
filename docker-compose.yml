@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: notebook_lm_backend
+    volumes:
+      - ./data:/app/data
+      - ./token.json:/app/token.json
+      - ./client_secret_874785674107-t0bhju3vgo2gnk3dmcphd96tg4kdbeo0.apps.googleusercontent.com.json:/app/credentials.json
+      - ./.env:/app/.env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: notebook_lm_frontend
+    ports:
+      - "8082:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

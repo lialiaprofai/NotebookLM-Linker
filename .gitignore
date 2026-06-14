@@ -1,0 +1,33 @@
+# Environment Variables & Keys
+.env
+*.env
+
+# Google API Credentials & Cache
+credentials.json
+client_secret_*.json
+token.json
+temp_upload.txt
+
+# Local Data Storage
+data/
+
+# Python Environment & Cache
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Node.js Dependencies & Build Outputs
+node_modules/
+dist/
+dist-ssr/
+*.local
+.eslintcache
+
+# OS Files
+.DS_Store
+Thumbs.db
+*.zip
+
