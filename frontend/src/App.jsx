@@ -22,6 +22,28 @@ export default function App() {
   const [freshness, setFreshness] = useState(true);
   const [authorityBoost, setAuthorityBoost] = useState(true);
   
+  // Custom API keys stored in localstorage
+  const [geminiApiKey, setGeminiApiKey] = useState(localStorage.getItem("gemini_api_key") || "");
+  const [perplexityApiKey, setPerplexityApiKey] = useState(localStorage.getItem("perplexity_api_key") || "");
+  const [anthropicApiKey, setAnthropicApiKey] = useState(localStorage.getItem("anthropic_api_key") || "");
+  const [modelProvider, setModelProvider] = useState(localStorage.getItem("model_provider") || "gemini");
+
+  useEffect(() => {
+    localStorage.setItem("gemini_api_key", geminiApiKey);
+  }, [geminiApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem("perplexity_api_key", perplexityApiKey);
+  }, [perplexityApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem("anthropic_api_key", anthropicApiKey);
+  }, [anthropicApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem("model_provider", modelProvider);
+  }, [modelProvider]);
+  
   // Loading & Sync States
   const [taskStatus, setTaskStatus] = useState(null); // { status, step, message, log: [] }
   const [driveLink, setDriveLink] = useState("");
@@ -116,7 +138,10 @@ export default function App() {
         body: JSON.stringify({
           topic: inputTopic,
           message: "Привет! Давай обсудим тему исследования. Каковы мои цели и на чем сделать акцент?",
-          chat_history: []
+          chat_history: [],
+          gemini_api_key: geminiApiKey || null,
+          anthropic_api_key: anthropicApiKey || null,
+          model_provider: modelProvider
         })
       });
       if (res.ok) {
@@ -151,7 +176,10 @@ export default function App() {
         body: JSON.stringify({
           topic: inputTopic || "Без темы",
           message: userMessage,
-          chat_history: chatMessages
+          chat_history: chatMessages,
+          gemini_api_key: geminiApiKey || null,
+          anthropic_api_key: anthropicApiKey || null,
+          model_provider: modelProvider
         })
       });
 
@@ -189,7 +217,10 @@ export default function App() {
           depth: searchDepth,
           freshness: freshness,
           authority_boost: authorityBoost,
-          chat_history: showChat ? chatMessages : []
+          chat_history: showChat ? chatMessages : [],
+          gemini_api_key: geminiApiKey || null,
+          anthropic_api_key: anthropicApiKey || null,
+          model_provider: modelProvider
         })
       });
 
@@ -257,7 +288,8 @@ export default function App() {
           task_id: currentTaskId,
           topic: inputTopic,
           refined_topic: refinedTopic,
-          approved_sources: approved
+          approved_sources: approved,
+          perplexity_api_key: perplexityApiKey || null
         })
       });
 
@@ -895,6 +927,107 @@ export default function App() {
           </div>
         )}
 
+        {/* SCREEN 6: Settings panel */}
+        {screen === "settings" && (
+          <div className="w-full max-w-2xl mx-auto my-6 text-left animate-fade-in" style={{ paddingBottom: '120px' }}>
+            <h2 className="text-3xl font-extrabold tracking-tight mb-2" style={{ fontFamily: 'Outfit, sans-serif', color: 'var(--text-primary)' }}>Настройки ключей и моделей</h2>
+            <p className="text-gray-500 mb-8 text-sm leading-relaxed">
+              Вы можете настроить персональные API-ключи для вызовов языковых моделей и поиска информации. Ключи сохраняются локально в вашем браузере (в localStorage) и отправляются в заголовках запросов без сохранения на сервере.
+            </p>
+
+            <div className="space-y-6">
+              {/* Model Provider Selection */}
+              <div className="glass-panel p-6 space-y-4">
+                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  <span className="material-symbols-outlined text-primary">psychology</span>
+                  Основной ИИ-ассистент
+                </h3>
+                <div className="flex flex-col space-y-2">
+                  <label className="text-xs font-semibold text-gray-500">Провайдер модели по умолчанию</label>
+                  <select 
+                    value={modelProvider}
+                    onChange={(e) => setModelProvider(e.target.value)}
+                    className="w-full bg-white border border-gray-300 rounded-xl p-3 text-sm text-gray-800 focus:outline-none focus:border-emerald-500 transition cursor-pointer"
+                  >
+                    <option value="gemini">Google Gemini (по умолчанию gemini-1.5-flash)</option>
+                    <option value="claude">Anthropic Claude (по умолчанию claude-3-5-sonnet)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Gemini API Key */}
+              <div className="glass-panel p-6 space-y-4">
+                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  <span className="material-symbols-outlined text-emerald-600">api</span>
+                  Google Gemini API Key
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Используется для интерактивного чата и генерации планов поиска. Если не задан, сервер будет использовать ключ из файла `.env` (если настроен).
+                </p>
+                <input 
+                  type="password"
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:border-emerald-500 transition animate-fade-in"
+                />
+              </div>
+
+              {/* Anthropic Claude API Key */}
+              <div className="glass-panel p-6 space-y-4">
+                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  <span className="material-symbols-outlined text-orange-600 font-bold">bolt</span>
+                  Anthropic Claude API Key
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Необходим при выборе Anthropic Claude в качестве провайдера. Если не задан, сервер попытается использовать ключ `ANTHROPIC_API_KEY` из файла `.env`.
+                </p>
+                <input 
+                  type="password"
+                  value={anthropicApiKey}
+                  onChange={(e) => setAnthropicApiKey(e.target.value)}
+                  placeholder="sk-ant-..."
+                  className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:border-emerald-500 transition animate-fade-in"
+                />
+              </div>
+
+              {/* Perplexity API Key */}
+              <div className="glass-panel p-6 space-y-4">
+                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  <span className="material-symbols-outlined text-blue-600">manage_search</span>
+                  Perplexity API Key
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Необходим для глубокого поиска актуальных статей, ссылок и видеороликов через модель `sonar`. Если не задан, будет использоваться серверный ключ.
+                </p>
+                <input 
+                  type="password"
+                  value={perplexityApiKey}
+                  onChange={(e) => setPerplexityApiKey(e.target.value)}
+                  placeholder="pplx-..."
+                  className="w-full border border-gray-300 rounded-xl p-3 text-sm focus:outline-none focus:border-emerald-500 transition animate-fade-in"
+                />
+              </div>
+
+              {/* Key Indicators */}
+              <div className="p-4 rounded-2xl flex flex-wrap gap-4 items-center justify-between text-xs text-gray-500" style={{ background: 'var(--surface-container-low)', border: '1px solid var(--border-color)' }}>
+                <span>Статус локальных ключей:</span>
+                <div className="flex gap-4">
+                  <span className="flex items-center gap-1">
+                    <span className={`w-2.5 h-2.5 rounded-full ${geminiApiKey ? 'bg-emerald-500' : 'bg-gray-300'}`} /> Gemini
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className={`w-2.5 h-2.5 rounded-full ${anthropicApiKey ? 'bg-emerald-500' : 'bg-gray-300'}`} /> Claude
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className={`w-2.5 h-2.5 rounded-full ${perplexityApiKey ? 'bg-emerald-500' : 'bg-gray-300'}`} /> Perplexity
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* SCREEN 5: History / Past topics */}
         {screen === "history" && (
           <div className="w-full max-w-4xl mx-auto my-6 text-left animate-fade-in" style={{ paddingBottom: '120px' }}>
@@ -1004,7 +1137,10 @@ export default function App() {
           <span className="material-symbols-outlined">history</span>
           <span>History</span>
         </a>
-        <a className="nav-item" onClick={() => alert("Личный кабинет и настройки в разработке")}>
+        <a 
+          className={`nav-item ${screen === "settings" ? "active" : ""}`} 
+          onClick={() => { setScreen("settings"); }}
+        >
           <span className="material-symbols-outlined">settings</span>
           <span>Settings</span>
         </a>

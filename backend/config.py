@@ -1,4 +1,5 @@
 import os
+import requests
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -7,6 +8,7 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 PORT = int(os.getenv("PORT", "8000"))
 HOST = os.getenv("HOST", "0.0.0.0")
 
@@ -38,3 +40,34 @@ def get_gemini_model(model_name=None, api_key=None):
         name = "gemini-flash-latest"
     print(f"Using Gemini Model: {name} (API key override: {bool(api_key)})")
     return genai.GenerativeModel(name)
+
+def call_claude_api(prompt: str, system_prompt: str = None, api_key: str = None) -> str:
+    """
+    Calls the Anthropic Claude API (messages endpoint) using requests.
+    """
+    key = api_key or ANTHROPIC_API_KEY
+    if not key:
+        raise ValueError("Anthropic API Key is not set.")
+        
+    headers = {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+    
+    payload = {
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens": 4000,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+    if system_prompt:
+        payload["system"] = system_prompt
+        
+    print(f"Calling Anthropic API: model=claude-3-5-sonnet-20241022 (API key override: {bool(api_key)})")
+    response = requests.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers, timeout=60)
+    response.raise_for_status()
+    res_data = response.json()
+    return res_data["content"][0]["text"]
+

@@ -35,14 +35,19 @@ class PlanTopicRequest(BaseModel):
     freshness: Optional[bool] = True
     authority_boost: Optional[bool] = True
     chat_history: Optional[List[Dict]] = []
+    gemini_api_key: Optional[str] = None
+    perplexity_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    model_provider: Optional[str] = "gemini"
 
 class SyncTopicRequest(BaseModel):
     task_id: str
     topic: str
     refined_topic: str
     approved_sources: List[Dict]
+    perplexity_api_key: Optional[str] = None
 
-def run_sync_workflow(task_id: str, topic: str, refined_topic: str, approved_sources: List[Dict]):
+def run_sync_workflow(task_id: str, topic: str, refined_topic: str, approved_sources: List[Dict], perplexity_api_key: Optional[str] = None):
     """
     Background worker that fetches and uploads approved sources to Google Drive.
     """
@@ -105,7 +110,8 @@ def run_sync_workflow(task_id: str, topic: str, refined_topic: str, approved_sou
                 source=source,
                 folder_id=topic_folder_id,
                 progress_callback=log_progress,
-                existing_urls=existing_urls
+                existing_urls=existing_urls,
+                perplexity_api_key=perplexity_api_key
             )
             
             uploaded_files = res.get("uploaded_files", [])
@@ -209,7 +215,10 @@ def plan_topic(request: PlanTopicRequest):
             depth=request.depth,
             freshness=request.freshness,
             authority_boost=request.authority_boost,
-            chat_history=request.chat_history
+            chat_history=request.chat_history,
+            gemini_api_key=request.gemini_api_key,
+            anthropic_api_key=request.anthropic_api_key,
+            model_provider=request.model_provider
         )
         
         # Save plan in memory tasks store
@@ -235,6 +244,9 @@ class TopicChatRequest(BaseModel):
     topic: str
     message: str
     chat_history: Optional[List[Dict]] = []
+    gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    model_provider: Optional[str] = "gemini"
 
 @app.post("/api/topics/chat")
 def topic_chat(request: TopicChatRequest):
@@ -246,7 +258,10 @@ def topic_chat(request: TopicChatRequest):
         reply = chat_pre_search(
             topic=request.topic,
             chat_history=request.chat_history,
-            question=request.message
+            question=request.message,
+            gemini_api_key=request.gemini_api_key,
+            anthropic_api_key=request.anthropic_api_key,
+            model_provider=request.model_provider
         )
         return {"reply": reply}
     except Exception as e:
@@ -270,7 +285,8 @@ def sync_topic(request: SyncTopicRequest, background_tasks: BackgroundTasks):
         task_id,
         request.topic,
         request.refined_topic,
-        request.approved_sources
+        request.approved_sources,
+        request.perplexity_api_key
     )
     return {"task_id": task_id}
 

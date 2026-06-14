@@ -1,7 +1,7 @@
 import json
 from typing import List
 from pydantic import BaseModel, Field
-from backend.config import get_gemini_model
+from backend.config import get_gemini_model, call_claude_api
 
 class ProposedSource(BaseModel):
     id: str = Field(description="A unique short alphanumeric identifier, e.g. 'doc_intro', 'yt_tutorial_1'.")
@@ -14,13 +14,11 @@ class SearchPlan(BaseModel):
     refined_topic: str = Field(description="A short, refined title of the topic of research (max 10 words, in Russian). This is used as the folder name on Google Drive.")
     proposed_sources: List[ProposedSource] = Field(description="A list of distinct high-quality proposed sources to research this topic comprehensively.")
 
-def generate_plan(topic: str, depth: str = "standard", freshness: bool = True, authority_boost: bool = True, chat_history: list = None, gemini_api_key: str = None) -> SearchPlan:
+def generate_plan(topic: str, depth: str = "standard", freshness: bool = True, authority_boost: bool = True, chat_history: list = None, gemini_api_key: str = None, anthropic_api_key: str = None, model_provider: str = "gemini") -> SearchPlan:
     """
-    Queries Gemini API to refine the topic and return a structured list of proposed sources
+    Queries Gemini or Claude API to refine the topic and return a structured list of proposed sources
     before downloading them, allowing for user approval.
     """
-    model = get_gemini_model("gemini-flash-latest", api_key=gemini_api_key)
-    
     # Customize count based on depth
     count_range = "10-12" if depth == "deep" else "5-7"
     
@@ -53,6 +51,49 @@ def generate_plan(topic: str, depth: str = "standard", freshness: bool = True, a
             role = "Пользователь" if msg.get('role') == 'user' else "ИИ-ассистент"
             chat_context += f"- {role}: {msg.get('content')}\n"
 
+    if model_provider == "claude":
+        system_prompt = f"""
+        Вы — аналитический планировщик исследований. Ваша задача — разработать план поиска информации по теме.
+        Вы должны вернуть ТОЛЬКО валидный JSON-объект, содержащий два поля:
+        1. "refined_topic": строка, очень краткое название темы (не более 4-6 слов, на русском языке), которое будет использовано как название папки на Google Диске (например: "Автоматизация контента в Playwright").
+        2. "proposed_sources": список объектов источников. Каждый объект должен иметь поля:
+           - "id": уникальный короткий буквенно-цифровой идентификатор (например: doc_intro, yt_tutorial_1).
+           - "title": понятное описание источника на русском языке (например: "Официальное руководство по Playwright API").
+           - "query": точный поисковый запрос на английском или русском языке для поиска через Perplexity или YouTube.
+           - "type": строка, принимающая строго одно из значений: "documentation", "article", "youtube".
+           - "reason": краткое объяснение пользы источника на русском языке.
+        """
+        
+        prompt = f"""
+        Разработайте план исследования по теме: "{topic}".
+        {chat_context}
+        
+        Количество источников должно быть ровно: {count_range}.
+        Учтите следующие параметры поиска:
+        {freshness_instruction}
+        {authority_instruction}
+        
+        Верните исключительно JSON, соответствующий схеме. Не пишите вступлений, пояснений или разметки.
+        """
+        
+        try:
+            response_text = call_claude_api(prompt, system_prompt=system_prompt, api_key=anthropic_api_key)
+            text = response_text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            data = json.loads(text)
+            return SearchPlan(**data)
+        except Exception as e:
+            print(f"Error in Claude plan generation: {e}. Raw response: {response_text if 'response_text' in locals() else ''}")
+            # Fall back to Gemini or return local fallback plan
+
+    # Default to Gemini
+    model = get_gemini_model("gemini-flash-latest", api_key=gemini_api_key)
     prompt = f"""
     Вы — аналитический планировщик исследований. Ваша задача — разработать план поиска информации по теме: "{topic}".
     {chat_context}
@@ -110,3 +151,4 @@ def generate_plan(topic: str, depth: str = "standard", freshness: bool = True, a
                 )
             ]
         )
+

@@ -16,16 +16,17 @@ def clean_slug(text: str) -> str:
     text = re.sub(r'_+', '_', text)
     return text.strip('_')
 
-def search_perplexity(query: str) -> tuple:
+def search_perplexity(query: str, perplexity_api_key: str = None) -> tuple:
     """
     Queries Perplexity API for the given query and returns (content, citations).
     """
-    if not PERPLEXITY_API_KEY:
+    key = perplexity_api_key or PERPLEXITY_API_KEY
+    if not key:
         print(f"Skipping Perplexity search for query: '{query}' (No API Key)")
         return "", []
     
     headers = {
-        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
     
@@ -49,15 +50,16 @@ def search_perplexity(query: str) -> tuple:
         print(f"Error querying Perplexity: {e}")
         return f"[Ошибка при получении данных от Perplexity: {e}]", []
 
-def find_youtube_videos(query: str) -> list:
+def find_youtube_videos(query: str, perplexity_api_key: str = None) -> list:
     """
     Uses Perplexity to find 2 relevant YouTube video URLs for a search query.
     """
-    if not PERPLEXITY_API_KEY:
+    key = perplexity_api_key or PERPLEXITY_API_KEY
+    if not key:
         return []
     
     perplexity_query = f"Find 2 high-quality YouTube video tutorials or reviews for query: '{query}'. Return only a raw JSON list of objects, each containing 'url' and 'title', and no other text."
-    response_text, _ = search_perplexity(perplexity_query)
+    response_text, _ = search_perplexity(perplexity_query, perplexity_api_key=perplexity_api_key)
     
     try:
         json_match = re.search(r"(\[.*\])", response_text, re.DOTALL)
@@ -157,11 +159,12 @@ def fetch_youtube_transcript(video_id: str) -> str:
         print(f"Error fetching YouTube transcript: {e}")
         return f"[Не удалось получить транскрипт для видео ID {video_id}: {e}]"
 
-def fetch_youtube_transcript_fallback(video_url: str, video_title: str) -> str:
+def fetch_youtube_transcript_fallback(video_url: str, video_title: str, perplexity_api_key: str = None) -> str:
     """
     Fallback method using Perplexity to extract transcript or detailed summary of a YouTube video.
     """
-    if not PERPLEXITY_API_KEY:
+    key = perplexity_api_key or PERPLEXITY_API_KEY
+    if not key:
         return "[Perplexity API key not set, cannot perform fallback]"
         
     query = (
@@ -170,7 +173,7 @@ def fetch_youtube_transcript_fallback(video_url: str, video_title: str) -> str:
     )
     
     try:
-        content, _ = search_perplexity(query)
+        content, _ = search_perplexity(query, perplexity_api_key=perplexity_api_key)
         if content and "[Ошибка при получении" not in content:
             return f"## [Автоматический обзор от Perplexity (Обход блокировки YouTube)]\n\n{content}"
         return f"[Не удалось получить обзор видео от Perplexity: {content}]"
@@ -204,7 +207,7 @@ def get_existing_links(service, folder_id: str) -> list:
         print(f"Error reading existing links from Drive: {e}")
         return []
 
-def sync_approved_source(service, source: dict, folder_id: str, progress_callback=None, existing_urls: list = None) -> dict:
+def sync_approved_source(service, source: dict, folder_id: str, progress_callback=None, existing_urls: list = None, perplexity_api_key: str = None) -> dict:
     """
     Processes a single approved source: collects content (Perplexity or YouTube Transcript)
     and uploads it to the given Google Drive folder.
@@ -222,7 +225,8 @@ def sync_approved_source(service, source: dict, folder_id: str, progress_callbac
         progress_callback(f"Начало сбора: '{title}' ({source_type})...")
         
     # Check if API Key is set, else generate mock data
-    if not PERPLEXITY_API_KEY:
+    key = perplexity_api_key or PERPLEXITY_API_KEY
+    if not key:
         if progress_callback:
             progress_callback(f"Заглушка (нет API ключа): '{title}'...")
         
@@ -243,7 +247,7 @@ def sync_approved_source(service, source: dict, folder_id: str, progress_callbac
         
     # Stage 1: Documentation / Articles
     if source_type in ["documentation", "article"]:
-        content, citations = search_perplexity(query)
+        content, citations = search_perplexity(query, perplexity_api_key=perplexity_api_key)
         
         # 1. Upload Perplexity Overview
         if content:
@@ -316,7 +320,7 @@ def sync_approved_source(service, source: dict, folder_id: str, progress_callbac
                 if transcript.startswith("[Не удалось получить"):
                     if progress_callback:
                         progress_callback("Блокировка YouTube. Запуск обхода через Perplexity...")
-                    transcript = fetch_youtube_transcript_fallback(url, video_title)
+                    transcript = fetch_youtube_transcript_fallback(url, video_title, perplexity_api_key=perplexity_api_key)
                     
                 filename = f"{source_id}_yt_{video_id}.md"
                 
