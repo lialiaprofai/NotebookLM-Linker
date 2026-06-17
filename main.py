@@ -12,7 +12,8 @@ import uvicorn
 from backend.config import DATA_DIR, PORT, HOST
 from backend.planner import generate_plan, SearchPlan, ProposedSource
 from backend.collector import sync_approved_source, clean_slug, get_existing_links
-from backend.drive_sync import check_drive_auth_status, get_drive_service, get_or_create_folder
+from backend.drive_sync import check_drive_auth_status, get_drive_service, get_or_create_folder, upload_text_file
+from backend.sheets_sync import get_default_spreadsheet_info, search_article_in_sheet
 
 # In-memory store for running background research and sync tasks
 TOPIC_TASKS = {}
@@ -180,6 +181,69 @@ def get_drive_auth_status():
     """
     return check_drive_auth_status()
 
+class SheetSearchRequest(BaseModel):
+    query: str
+    sheet_name: Optional[str] = "выгрузка из jdy"
+
+class SaveSheetExtractRequest(BaseModel):
+    filename: str
+    content: str
+    folder_name: str
+
+@app.get("/api/sheets/info")
+def get_sheets_info():
+    """
+    Fetches info about the default configured Google Sheet.
+    """
+    try:
+        return get_default_spreadsheet_info()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка чтения метаданных таблицы: {e}")
+
+@app.post("/api/sheets/search")
+def search_sheets(request: SheetSearchRequest):
+    """
+    Searches the default sheet for rows matching the query.
+    """
+    try:
+        matches = search_article_in_sheet(request.query, request.sheet_name)
+        
+        # Combine matches into a single text block
+        if matches:
+            combined = "\n".join([m["formatted"] for m in matches])
+        else:
+            combined = f"Совпадений для артикула '{request.query}' не найдено."
+            
+        return {
+            "matches": matches,
+            "combined_text": combined
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка поиска в таблице: {e}")
+
+@app.post("/api/sheets/save-to-drive")
+def save_sheet_to_drive(request: SaveSheetExtractRequest):
+    """
+    Saves the extracted sheet results directly into a Google Drive folder.
+    """
+    try:
+        service = get_drive_service()
+        root_folder_id = get_or_create_folder(service, "NotebookLM_Sources")
+        topic_folder_id = get_or_create_folder(service, request.folder_name, parent_id=root_folder_id)
+        
+        # Save to drive using existing helper
+        file_info = upload_text_file(service, request.filename, request.content, topic_folder_id)
+        
+        return {
+            "success": True,
+            "filename": file_info.get("name"),
+            "webViewLink": file_info.get("webViewLink"),
+            "folder_link": f"https://drive.google.com/drive/folders/{topic_folder_id}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка сохранения на Google Диск: {e}")
+
+
 @app.get("/api/topics")
 def get_topics():
     """
@@ -202,6 +266,21 @@ def get_topics():
                 except Exception:
                     pass
     return topics
+
+@app.delete("/api/topics/{topic_slug}")
+def delete_topic(topic_slug: str):
+    """
+    Deletes the topic folder from the data directory.
+    """
+    import shutil
+    path = os.path.join(DATA_DIR, "topics", topic_slug)
+    if os.path.exists(path) and os.path.isdir(path):
+        try:
+            shutil.rmtree(path)
+            return {"status": "success", "message": f"Тема '{topic_slug}' успешно удалена"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Ошибка при удалении папки: {e}")
+    raise HTTPException(status_code=404, detail="Тема не найдена")
 
 @app.post("/api/topics/plan")
 def plan_topic(request: PlanTopicRequest):

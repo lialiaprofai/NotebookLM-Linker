@@ -54,6 +54,20 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
 
+  // Google Sheets Assistant States
+  const [sheetInfo, setSheetInfo] = useState(null);
+  const [selectedSheetTab, setSelectedSheetTab] = useState("");
+  const [sheetSearchQuery, setSheetSearchQuery] = useState("");
+  const [sheetSearchLoading, setSheetSearchLoading] = useState(false);
+  const [sheetMatches, setSheetMatches] = useState([]);
+  const [sheetCombinedText, setSheetCombinedText] = useState("");
+  const [sheetInfoLoading, setSheetInfoLoading] = useState(false);
+  const [sheetSaveLoading, setSheetSaveLoading] = useState(false);
+  const [sheetFolderOption, setSheetFolderOption] = useState("__new__");
+  const [sheetNewFolderName, setSheetNewFolderName] = useState("");
+  const [sheetSaveFileName, setSheetSaveFileName] = useState("");
+  const [sheetSaveSuccess, setSheetSaveSuccess] = useState(null);
+
   const logEndRef = useRef(null);
   const chatEndRef = useRef(null);
 
@@ -63,10 +77,11 @@ export default function App() {
     checkAuthStatus();
   }, []);
 
-  // Poll task status when syncing
+  // Poll task status when syncing in background
   useEffect(() => {
     let interval;
-    if (taskId && screen === "loading") {
+    const isTaskRunning = !taskStatus || (taskStatus.status !== "completed" && taskStatus.status !== "failed");
+    if (taskId && isTaskRunning) {
       interval = setInterval(async () => {
         try {
           const res = await fetch(`${API_BASE}/api/tasks/${taskId}`);
@@ -77,7 +92,12 @@ export default function App() {
           if (status.status === "completed") {
             clearInterval(interval);
             setDriveLink(status.drive_folder_link);
-            setScreen("completed");
+            setScreen(currentScreen => {
+              if (currentScreen === "loading") {
+                return "completed";
+              }
+              return currentScreen;
+            });
             fetchTopics();
           } else if (status.status === "failed") {
             clearInterval(interval);
@@ -88,7 +108,7 @@ export default function App() {
       }, 1500);
     }
     return () => clearInterval(interval);
-  }, [taskId, screen]);
+  }, [taskId, taskStatus?.status]);
 
   // Scroll to bottom of terminal console log
   useEffect(() => {
@@ -157,6 +177,39 @@ export default function App() {
     }
   };
 
+  const handleGoToResearch = () => {
+    if (taskId && taskStatus) {
+      if (taskStatus.status === "pending" || taskStatus.status === "running") {
+        setScreen("loading");
+        return;
+      }
+      if (taskStatus.status === "completed") {
+        setScreen("completed");
+        return;
+      }
+    }
+    setScreen("wizard");
+    resetForm();
+  };
+
+  const handleDeleteTopic = async (slug) => {
+    if (!window.confirm("Вы уверены, что хотите удалить это исследование из истории?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/topics/${slug}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        fetchTopics();
+      } else {
+        const errData = await res.json();
+        alert(`Ошибка при удалении: ${errData.detail || "Неизвестная ошибка"}`);
+      }
+    } catch (err) {
+      console.error("Error deleting topic:", err);
+      alert(`Ошибка при удалении: ${err.message}`);
+    }
+  };
+
   const sendWelcomeMessage = async () => {
     if (!inputTopic.trim() || chatLoading) return;
     setChatLoading(true);
@@ -222,6 +275,100 @@ export default function App() {
       setChatLoading(false);
     }
   };
+
+  // Google Sheets API Handlers
+  const fetchSheetInfo = async () => {
+    setSheetInfoLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sheets/info`);
+      if (res.ok) {
+        const data = await res.json();
+        setSheetInfo(data);
+        if (data.sheets && data.sheets.length > 0) {
+          const target = data.sheets.find(s => s.toLowerCase() === "выгрузка из jdy") || data.sheets[0];
+          setSelectedSheetTab(target);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching sheet info:", err);
+    } finally {
+      setSheetInfoLoading(false);
+    }
+  };
+
+  const handleSheetSearch = async (e) => {
+    if (e) e.preventDefault();
+    if (!sheetSearchQuery.trim() || sheetSearchLoading) return;
+    setSheetSearchLoading(true);
+    setSheetSaveSuccess(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/sheets/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: sheetSearchQuery,
+          sheet_name: selectedSheetTab
+        })
+      });
+      if (!res.ok) throw new Error("Search request failed");
+      const data = await res.json();
+      setSheetMatches(data.matches);
+      setSheetCombinedText(data.combined_text);
+      // Pre-fill save filename
+      setSheetSaveFileName(`Закупки_${sheetSearchQuery.trim().replace(/[^a-zA-Z0-9а-яА-Я-_]/g, "_")}.md`);
+      setSheetNewFolderName(`Закупки ${sheetSearchQuery.trim()}`);
+    } catch (err) {
+      alert(`Ошибка поиска: ${err.message}`);
+    } finally {
+      setSheetSearchLoading(false);
+    }
+  };
+
+  const handleSheetSaveToDrive = async () => {
+    if (!sheetCombinedText || sheetSaveLoading) return;
+    setSheetSaveLoading(true);
+    setSheetSaveSuccess(null);
+    
+    const targetFolder = sheetFolderOption === "__new__" ? sheetNewFolderName : sheetFolderOption;
+    if (!targetFolder.trim()) {
+      alert("Пожалуйста, укажите имя папки.");
+      setSheetSaveLoading(false);
+      return;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/sheets/save-to-drive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: sheetSaveFileName || "sheet_extract.md",
+          content: sheetCombinedText,
+          folder_name: targetFolder
+        })
+      });
+      if (!res.ok) throw new Error("Save request failed");
+      const data = await res.json();
+      setSheetSaveSuccess(data);
+      fetchTopics(); // Refresh available folders in UI list
+    } catch (err) {
+      alert(`Ошибка сохранения: ${err.message}`);
+    } finally {
+      setSheetSaveLoading(false);
+    }
+  };
+
+  const resetSheetsForm = () => {
+    setSheetSearchQuery("");
+    setSheetMatches([]);
+    setSheetCombinedText("");
+    setSheetSaveSuccess(null);
+  };
+
+  useEffect(() => {
+    if (screen === "sheets" && !sheetInfo) {
+      fetchSheetInfo();
+    }
+  }, [screen]);
 
   const resetForm = () => {
     setInputTopic("");
@@ -386,7 +533,7 @@ export default function App() {
     <div className="flex flex-col min-h-screen" style={{ paddingBottom: '90px' }}>
       {/* Header bar */}
       <header className="app-header">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => { setScreen("wizard"); resetForm(); }}>
+        <div className="flex items-center gap-3 cursor-pointer" onClick={handleGoToResearch}>
           <span className="material-symbols-outlined text-primary text-[28px]">hub</span>
           <h1 className="font-bold text-lg text-primary" style={{ fontFamily: 'Outfit, sans-serif' }}>NotebookLM Linker</h1>
         </div>
@@ -724,7 +871,7 @@ export default function App() {
                       className="input-field py-3 font-semibold cursor-pointer bg-white"
                       style={{ fontSize: '14px' }}
                     >
-                      <option value="__new__">➕ Создать новую папку...</option>
+                      <option value="__new__">➕ Выбрать новую папку...</option>
                       {topics.map(t => (
                         <option key={t.slug} value={t.refined_topic}>
                           📁 {t.refined_topic}
@@ -978,7 +1125,7 @@ export default function App() {
                     className="w-full bg-white border border-gray-300 rounded-xl p-3 text-sm text-gray-800 focus:outline-none focus:border-emerald-500 transition cursor-pointer"
                   >
                     <option value="gemini">Google Gemini (по умолчанию gemini-1.5-flash)</option>
-                    <option value="claude">Anthropic Claude (по умолчанию claude-3-5-sonnet)</option>
+                    <option value="claude">Anthropic Claude (по умолчанию claude-sonnet-4-6)</option>
                   </select>
                 </div>
               </div>
@@ -1069,7 +1216,7 @@ export default function App() {
                 </h1>
               </div>
               <button 
-                onClick={() => setScreen("wizard")}
+                onClick={handleGoToResearch}
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 text-xs text-gray-600 rounded-lg transition font-semibold"
               >
                 ← Назад к поиску
@@ -1134,9 +1281,282 @@ export default function App() {
                         <span className="material-symbols-outlined text-[16px]">sync</span>
                         Возобновить / Перезапустить
                       </button>
+                      <button
+                        onClick={() => handleDeleteTopic(t.slug)}
+                        className="py-1.5 px-3 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-bold transition flex items-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                        Удалить
+                      </button>
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SCREEN 6: Sheets AI Assistant */}
+        {screen === "sheets" && (
+          <div className="w-full max-w-4xl mx-auto my-6 text-left animate-fade-in" style={{ paddingBottom: '120px' }}>
+            <div className="flex items-center justify-between pb-3 mb-6 border-b border-gray-200">
+              <div>
+                <span className="text-xs font-bold text-primary uppercase tracking-wider" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  Интеграция с Google Таблицами
+                </span>
+                <h1 className="text-2xl font-extrabold tracking-tight mt-1 text-gray-900" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  Ассистент по закупкам JDY
+                </h1>
+              </div>
+              <button 
+                onClick={fetchSheetInfo}
+                disabled={sheetInfoLoading}
+                className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 border border-gray-300 text-xs text-gray-600 rounded-lg transition font-semibold flex items-center gap-1"
+              >
+                <span className={`material-symbols-outlined text-[16px] ${sheetInfoLoading ? 'spinner' : ''}`}>sync</span>
+                Обновить метаданные
+              </button>
+            </div>
+
+            {sheetInfoLoading && !sheetInfo ? (
+              <div className="glass-panel p-12 text-center text-gray-500">
+                <div className="flex justify-center mb-4">
+                  <div className="w-8 h-8 rounded-full border-4 border-emerald-200 border-t-emerald-600 spinner" />
+                </div>
+                <p className="font-semibold text-gray-600">Подключение к Google Sheets...</p>
+                <p className="text-xs text-gray-400 mt-1">Считываем структуру табличного файла.</p>
+              </div>
+            ) : !sheetInfo ? (
+              <div className="glass-panel p-8 text-center text-red-500 border-red-200 bg-red-50/5">
+                <span className="material-symbols-outlined text-[48px] mb-2">error</span>
+                <p className="font-semibold">Не удалось подключиться к Google Sheets</p>
+                <p className="text-xs text-gray-500 mt-1">Проверьте credentials.json/token.json и включен ли Google Sheets API.</p>
+                <button 
+                  onClick={fetchSheetInfo}
+                  className="mt-4 px-4 py-2 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 transition"
+                >
+                  Попробовать снова
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-6 animate-fade-in">
+                {/* Spreadsheet Metadata Card */}
+                <div className="glass-panel p-5 flex flex-col md:flex-row md:items-center justify-between gap-4" style={{ background: 'var(--surface-container-low)', border: '1px solid var(--border-color)', borderRadius: '16px' }}>
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-[36px] text-emerald-600">table_chart</span>
+                    <div>
+                      <h4 className="font-bold text-gray-850 text-sm leading-tight">{sheetInfo.title}</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">ID таблицы: <span className="font-mono text-[10px] select-all bg-black/5 px-1 py-0.5 rounded">{sheetInfo.spreadsheet_id}</span></p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col space-y-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Выберите лист:</label>
+                    <select 
+                      value={selectedSheetTab} 
+                      onChange={(e) => {
+                        setSelectedSheetTab(e.target.value);
+                        resetSheetsForm();
+                      }}
+                      className="bg-white border border-gray-300 rounded-lg py-1 px-3 text-xs text-gray-800 focus:outline-none focus:border-emerald-500 transition cursor-pointer font-semibold"
+                    >
+                      {sheetInfo.sheets.map(name => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Search Bar Block */}
+                <form onSubmit={handleSheetSearch} className="glass-panel p-6 flex flex-col space-y-4">
+                  <div className="flex flex-col space-y-1">
+                    <label className="text-xs font-semibold text-gray-600">Артикул или его часть для поиска:</label>
+                    <div className="relative group w-full">
+                      <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                        <span className="material-symbols-outlined text-primary" style={{ fontSize: '20px' }}>search</span>
+                      </div>
+                      <input
+                        type="text"
+                        value={sheetSearchQuery}
+                        onChange={(e) => setSheetSearchQuery(e.target.value)}
+                        placeholder="Например: 715-5800..."
+                        className="input-field"
+                        disabled={sheetSearchLoading}
+                        style={{ paddingLeft: '44px', fontSize: '15px' }}
+                      />
+                    </div>
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    disabled={!sheetSearchQuery.trim() || sheetSearchLoading}
+                    className="glow-button w-full flex items-center justify-center space-x-2"
+                  >
+                    {sheetSearchLoading ? (
+                      <>
+                        <div className="w-4 h-4 rounded-full border-2 border-t-black border-white/20 spinner" />
+                        <span>Поиск по таблице...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Найти цены и детали</span>
+                        <span className="material-symbols-outlined text-[18px]">bolt</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                {/* Results Section */}
+                {(sheetMatches.length > 0 || sheetSearchQuery) && !sheetSearchLoading && (
+                  <div className="space-y-4 animate-fade-in">
+                    <div className="flex items-center justify-between border-b border-gray-200 pb-2">
+                      <h3 className="font-bold text-gray-800 text-base flex items-center gap-1" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                        Результаты поиска 
+                        <span className="bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded-full font-bold ml-1">
+                          {sheetMatches.length}
+                        </span>
+                      </h3>
+                      {sheetMatches.length > 0 && (
+                        <button
+                          onClick={() => {
+                            copyToClipboard(sheetCombinedText);
+                          }}
+                          className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition flex items-center gap-1"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">content_copy</span>
+                          Копировать текст
+                        </button>
+                      )}
+                    </div>
+
+                    {sheetMatches.length === 0 ? (
+                      <div className="glass-panel p-8 text-center text-gray-500">
+                        <span className="material-symbols-outlined text-gray-300 text-[36px] mb-1">find_in_page</span>
+                        <p className="font-semibold text-xs">Ничего не найдено</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">Попробуйте ввести другую часть артикула (например, 715-5800).</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {sheetMatches.map((m, idx) => (
+                          <div key={idx} className="glass-panel p-4 flex flex-col justify-between space-y-3" style={{ border: '1px solid var(--border-color)', borderRadius: '16px' }}>
+                            <div className="flex items-center justify-between text-[11px] text-gray-500 pb-2 border-b border-gray-100">
+                              <span className="flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[14px]">receipt_long</span>
+                                Заказ: <strong className="text-gray-700">{m.order_no}</strong>
+                              </span>
+                              <span>{m.date}</span>
+                            </div>
+                            
+                            <div className="text-xs text-gray-700 leading-relaxed text-left flex-grow">
+                              Артикул <strong className="text-primary font-bold">{m.article}</strong> закупался в заказе <strong className="text-gray-850">{m.order_no}</strong> от {m.date}, поставщик <strong className="text-gray-850">{m.supplier}</strong>, валюта заказа <strong>{m.currency}</strong> по курсу <strong>{m.rate}</strong>.
+                            </div>
+
+                            <div className="flex items-center gap-4 text-xs pt-2 border-t border-gray-100/50">
+                              <span className="text-gray-500 font-medium">Цена F = <strong className="text-gray-800">{m.price_f}</strong></span>
+                              <span style={{ color: '#00855d', backgroundColor: 'rgba(0, 133, 93, 0.08)', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold' }}>
+                                A = {m.price_a}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Text Block for NotebookLM Source */}
+                    {sheetMatches.length > 0 && (
+                      <div className="glass-panel p-5 space-y-4">
+                        <h4 className="font-bold text-xs text-gray-700 uppercase tracking-wider" style={{ fontFamily: 'Outfit, sans-serif' }}>Консолидированный ответ</h4>
+                        <textarea
+                          readOnly
+                          value={sheetCombinedText}
+                          className="w-full bg-gray-50 text-gray-800 border border-gray-250 rounded-xl p-3 text-xs font-mono h-40 focus:outline-none"
+                        />
+
+                        {/* Save to Drive Actions Container */}
+                        <div className="p-4 rounded-xl space-y-3" style={{ background: 'var(--surface-container-low)', border: '1px dashed var(--border-color)', borderRadius: '12px' }}>
+                          <h5 className="font-bold text-xs text-gray-800 flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-primary text-[18px]">cloud_upload</span>
+                            Выгрузить сводку на Google Диск для NotebookLM
+                          </h5>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="flex flex-col space-y-1">
+                              <label className="text-[10px] text-gray-500 font-bold">Имя файла:</label>
+                              <input 
+                                type="text"
+                                value={sheetSaveFileName}
+                                onChange={(e) => setSheetSaveFileName(e.target.value)}
+                                className="bg-white border border-gray-305 rounded-lg p-2 text-xs focus:outline-none focus:border-emerald-500"
+                              />
+                            </div>
+
+                            <div className="flex flex-col space-y-1">
+                              <label className="text-[10px] text-gray-500 font-bold">Папка назначения:</label>
+                              <select 
+                                value={sheetFolderOption}
+                                onChange={(e) => setSheetFolderOption(e.target.value)}
+                                className="bg-white border border-gray-305 rounded-lg p-2 text-xs focus:outline-none focus:border-emerald-500 cursor-pointer"
+                              >
+                                <option value="__new__">➕ Создать новую папку...</option>
+                                {topics.map(t => (
+                                  <option key={t.slug} value={t.refined_topic}>
+                                    📁 {t.refined_topic}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          {sheetFolderOption === "__new__" && (
+                            <div className="flex flex-col space-y-1">
+                              <label className="text-[10px] text-gray-500 font-bold">Имя новой папки:</label>
+                              <input 
+                                type="text"
+                                value={sheetNewFolderName}
+                                onChange={(e) => setSheetNewFolderName(e.target.value)}
+                                placeholder="Например: Закупки Артикула..."
+                                className="bg-white border border-gray-305 rounded-lg p-2 text-xs focus:outline-none focus:border-emerald-500"
+                              />
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={handleSheetSaveToDrive}
+                            disabled={sheetSaveLoading}
+                            className="glow-button w-full py-2.5 flex items-center justify-center space-x-2 text-xs font-bold mt-2"
+                          >
+                            {sheetSaveLoading ? (
+                              <>
+                                <div className="w-4 h-4 rounded-full border-2 border-t-black border-white/20 spinner" />
+                                <span>Выгрузка...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="material-symbols-outlined text-[16px]">cloud_sync</span>
+                                <span>Сохранить на Google Диск</span>
+                              </>
+                            )}
+                          </button>
+
+                          {sheetSaveSuccess && (
+                            <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg text-left flex items-start space-x-2">
+                              <span className="material-symbols-outlined text-primary text-[18px]">check_circle</span>
+                              <div>
+                                <p className="font-bold">Успешно загружено!</p>
+                                <p className="mt-0.5">
+                                  Файл <a href={sheetSaveSuccess.webViewLink} target="_blank" rel="noreferrer" className="underline font-semibold">{sheetSaveSuccess.filename}</a> сохранен в папку Google Drive.
+                                </p>
+                                <a href={sheetSaveSuccess.folder_link} target="_blank" rel="noreferrer" className="inline-block mt-1 font-bold underline">
+                                  Открыть папку диска →
+                                </a>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1153,7 +1573,7 @@ export default function App() {
       <nav className="app-nav">
         <a 
           className={`nav-item ${screen === "wizard" || screen === "approval" || screen === "loading" || screen === "completed" ? "active" : ""}`} 
-          onClick={() => { setScreen("wizard"); resetForm(); }}
+          onClick={handleGoToResearch}
         >
           <span className="material-symbols-outlined">search</span>
           <span>Research</span>
@@ -1173,6 +1593,7 @@ export default function App() {
           <span>Settings</span>
         </a>
       </nav>
+
     </div>
   );
 }

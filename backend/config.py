@@ -58,7 +58,7 @@ def call_claude_api(prompt: str, system_prompt: str = None, api_key: str = None)
     }
     
     payload = {
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 4000,
         "messages": [
             {"role": "user", "content": prompt}
@@ -67,7 +67,7 @@ def call_claude_api(prompt: str, system_prompt: str = None, api_key: str = None)
     if system_prompt:
         payload["system"] = system_prompt
         
-    print(f"Calling Anthropic API: model=claude-sonnet-4-5-20250929 (API key override: {bool(api_key)})")
+    print(f"Calling Anthropic API: model=claude-sonnet-4-6 (API key override: {bool(api_key)})")
     response = requests.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers, timeout=60)
     response.raise_for_status()
     res_data = response.json()
